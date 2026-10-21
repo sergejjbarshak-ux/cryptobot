@@ -5,7 +5,7 @@ from threading import Thread
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Flask-сервер для удержания бота в сети 24/7 на Render
+# Flask-сервер для прохождения проверки портов на Render
 app_web = Flask('')
 
 @app_web.route('/')
@@ -28,31 +28,50 @@ previous_prices = {}
 def get_crypto_price(symbol: str):
     symbol = symbol.upper().strip()
     
-    # Автоматически убираем суффикс USDT для поиска
-    clean_symbol = symbol.replace("USDT", "").lower()
-    
-    url = f"https://api.coingecko.com/api/v3/search?query={clean_symbol}"
+    # Приводим тикер к стандарту, например BTC -> BTCUSDT
+    if not symbol.endswith("USDT") and not symbol.endswith("USD"):
+        base_symbol = symbol + "USDT"
+    else:
+        base_symbol = symbol
+
     headers = {"User-Agent": "Mozilla/5.0"}
-    
+
+    # Источник 1: KuCoin (Поддерживает абсолютно любые пары к USDT)
     try:
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            coins = data.get("coins", [])
-            if coins:
-                # Берем самую первую подходящую монету из поиска
-                coin_id = coins[0]["id"]
-                
-                # Запрашиваем актуальную цену по найденному ID
-                price_url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
-                p_resp = requests.get(price_url, headers=headers, timeout=5)
-                if p_resp.status_code == 200:
-                    p_data = p_resp.json()
-                    if coin_id in p_data and "usd" in p_data[coin_id]:
-                        return float(p_data[coin_id]["usd"])
-    except Exception as e:
-        print(f"Ошибка поиска цены для {symbol}: {e}")
-        
+        kucoin_symbol = base_symbol.replace("USDT", "-USDT")
+        url_kucoin = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={kucoin_symbol}"
+        res = requests.get(url_kucoin, headers=headers, timeout=4)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("code") == "200000" and data.get("data") and data["data"].get("price"):
+                return float(data["data"]["price"])
+    except Exception:
+        pass
+
+    # Источник 2: Bybit (Второй надежный источник для всех спотовых пар)
+    try:
+        url_bybit = f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={base_symbol}"
+        res = requests.get(url_bybit, headers=headers, timeout=4)
+        if res.status_code == 200:
+            data = res.json()
+            list_data = data.get("result", {}).get("list", [])
+            if list_data and "lastPrice" in list_data[0]:
+                return float(list_data[0]["lastPrice"])
+    except Exception:
+        pass
+
+    # Источник 3: CoinGecko (Поиск по каталогу)
+    try:
+        clean_coin = base_symbol.replace("USDT", "").lower()
+        url_cg = f"https://api.coingecko.com/api/v3/simple/price?ids={clean_coin}&vs_currencies=usd"
+        res = requests.get(url_cg, headers=headers, timeout=4)
+        if res.status_code == 200:
+            data = res.json()
+            if clean_coin in data and "usd" in data[clean_coin]:
+                return float(data[clean_coin]["usd"])
+    except Exception:
+        pass
+
     return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,7 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "👋 Добро пожаловать в Crypto Notify BOT!\n\n"
         "Функции:\n"
-        "• Многоразовые алерты\n"
+        "• Многоразовые алерты (любые монеты!)\n"
         "• Быстрый курс монет в 1 клик\n"
         "• Детектор пампов и дампов\n\n"
         "Выберите нужный раздел в меню:"
@@ -81,7 +100,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📥 Как добавить алерт:\n"
             "Отправьте сообщение в формате:\n"
             "ТИКЕР ЦЕНА\n\n"
-            "Пример: BTCUSDT 85000 или APTUSDT 8.6 (работает любая монета!)"
+            "Пример: BTCUSDT 85000, APTUSDT 8.6, BOMEUSDT 0.00062 или SOL 150"
         )
         
     elif text == "📋 Мои алерты":
@@ -96,7 +115,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg)
             
     elif text == "🔍 Курс монет":
-        symbols_to_check = ["BTCUSDT", "ETHUSDT", "APTUSDT", "SOLUSDT"]
+        symbols_to_check = ["BTCUSDT", "ETHUSDT", "APTUSDT", "SOLUSDT", "BOMEUSDT"]
         msg = "🔍 Актуальные курсы:\n\n"
         for sym in symbols_to_check:
             p = get_crypto_price(sym)
@@ -128,7 +147,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             current_price = get_crypto_price(symbol)
             if current_price is None:
-                await update.message.reply_text(f"❌ Не удалось найти монету {symbol}.")
+                await update.message.reply_text(f"❌ Не удалось найти монету/пару {symbol}.")
                 return
 
             initial_side = "above" if current_price >= target_price else "below"
