@@ -25,7 +25,7 @@ user_alerts = {}
 alert_counter = 1
 previous_prices = {}
 
-# Словарь для быстрого сопоставления тикеров с монетами на CoinGecko
+# Словарь для связи тикеров с монетами в CoinCap
 COIN_IDS = {
     "BTCUSDT": "bitcoin",
     "ETHUSDT": "ethereum",
@@ -35,23 +35,22 @@ COIN_IDS = {
 
 def get_crypto_price(symbol: str):
     symbol = symbol.upper().strip()
-    coin_id = COIN_IDS.get(symbol)
+    asset_id = COIN_IDS.get(symbol)
     
-    if not coin_id:
-        # Если монеты нет в словаре, пробуем угадать по префиксу USDT
-        coin_id = symbol.replace("USDT", "").lower()
+    if not asset_id:
+        asset_id = symbol.replace("USDT", "").lower()
 
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+    url = f"https://api.coincap.io/v2/assets/{asset_id}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            if coin_id in data and "usd" in data[coin_id]:
-                return float(data[coin_id]["usd"])
+            if "data" in data and "priceUsd" in data["data"]:
+                return float(data["data"]["priceUsd"])
     except Exception as e:
-        print(f"Ошибка запроса цены для {symbol}: {e}")
+        print(f"Ошибка CoinCap для {symbol}: {e}")
         
     return None
 
@@ -81,7 +80,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📥 Как добавить алерт:\n"
             "Отправьте сообщение в формате:\n"
             "ТИКЕР ЦЕНА\n\n"
-            "Пример: APTUSDT 8.6 или BOMEUSDT 0.00062"
+            "Пример: BTCUSDT 85000 или ETHUSDT 3000"
         )
         
     elif text == "📋 Мои алерты":
@@ -123,7 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 target_price = float(parts[1].replace(",", "."))
             except ValueError:
-                await update.message.reply_text("❌ Неверный формат цены. Пример: APTUSDT 8.6")
+                await update.message.reply_text("❌ Неверный формат цены. Пример: BTCUSDT 85000")
                 return
 
             current_price = get_crypto_price(symbol)
@@ -147,11 +146,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alert_counter += 1
 
             await update.message.reply_text(
-                f"✅ Алерт галереи {symbol} по цене {target_price} добавлен (ID: {alert_id})\n"
+                f"✅ Алерт {symbol} по цене {target_price} добавлен (ID: {alert_id})\n"
                 f"Текущая цена: {current_price}"
             )
         else:
-            await update.message.reply_text("Используйте кнопки меню или отправьте пару и цену (например: APTUSDT 8.6)")
+            await update.message.reply_text("Используйте кнопки меню или отправьте пару и цену (например: BTCUSDT 85000)")
 
 async def delete_alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
