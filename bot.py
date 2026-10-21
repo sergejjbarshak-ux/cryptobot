@@ -5,7 +5,7 @@ from threading import Thread
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Flask-сервер для прохождения проверки портов на Render
+# Flask-сервер для удержания бота в сети 24/7 на Render
 app_web = Flask('')
 
 @app_web.route('/')
@@ -25,32 +25,33 @@ user_alerts = {}
 alert_counter = 1
 previous_prices = {}
 
-# Словарь для связи тикеров с монетами в CoinCap
-COIN_IDS = {
-    "BTCUSDT": "bitcoin",
-    "ETHUSDT": "ethereum",
-    "APTUSDT": "aptos",
-    "BOMEUSDT": "book-of-meme"
-}
-
 def get_crypto_price(symbol: str):
     symbol = symbol.upper().strip()
-    asset_id = COIN_IDS.get(symbol)
     
-    if not asset_id:
-        asset_id = symbol.replace("USDT", "").lower()
-
-    url = f"https://api.coincap.io/v2/assets/{asset_id}"
+    # Автоматически убираем суффикс USDT для поиска
+    clean_symbol = symbol.replace("USDT", "").lower()
+    
+    url = f"https://api.coingecko.com/api/v3/search?query={clean_symbol}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            if "data" in data and "priceUsd" in data["data"]:
-                return float(data["data"]["priceUsd"])
+            coins = data.get("coins", [])
+            if coins:
+                # Берем самую первую подходящую монету из поиска
+                coin_id = coins[0]["id"]
+                
+                # Запрашиваем актуальную цену по найденному ID
+                price_url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+                p_resp = requests.get(price_url, headers=headers, timeout=5)
+                if p_resp.status_code == 200:
+                    p_data = p_resp.json()
+                    if coin_id in p_data and "usd" in p_data[coin_id]:
+                        return float(p_data[coin_id]["usd"])
     except Exception as e:
-        print(f"Ошибка CoinCap для {symbol}: {e}")
+        print(f"Ошибка поиска цены для {symbol}: {e}")
         
     return None
 
@@ -80,7 +81,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📥 Как добавить алерт:\n"
             "Отправьте сообщение в формате:\n"
             "ТИКЕР ЦЕНА\n\n"
-            "Пример: BTCUSDT 85000 или ETHUSDT 3000"
+            "Пример: BTCUSDT 85000 или APTUSDT 8.6 (работает любая монета!)"
         )
         
     elif text == "📋 Мои алерты":
@@ -95,12 +96,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg)
             
     elif text == "🔍 Курс монет":
-        symbols_to_check = ["BOMEUSDT", "APTUSDT", "ETHUSDT", "BTCUSDT"]
+        symbols_to_check = ["BTCUSDT", "ETHUSDT", "APTUSDT", "SOLUSDT"]
         msg = "🔍 Актуальные курсы:\n\n"
         for sym in symbols_to_check:
             p = get_crypto_price(sym)
             if p is not None:
-                msg += f"• {sym}: {p}\n"
+                msg += f"• {sym}: ${p}\n"
             else:
                 msg += f"• {sym}: Ошибка загрузки\n"
         await update.message.reply_text(msg)
@@ -127,7 +128,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             current_price = get_crypto_price(symbol)
             if current_price is None:
-                await update.message.reply_text(f"❌ Не удалось найти пару {symbol}.")
+                await update.message.reply_text(f"❌ Не удалось найти монету {symbol}.")
                 return
 
             initial_side = "above" if current_price >= target_price else "below"
@@ -177,7 +178,7 @@ async def delete_alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def price_checker_job(context: ContextTypes.DEFAULT_TYPE):
     global previous_prices
 
-    all_symbols = {"BOMEUSDT", "APTUSDT", "ETHUSDT", "BTCUSDT"}
+    all_symbols = {"BTCUSDT", "ETHUSDT", "APTUSDT"}
     for chat_id, alerts in user_alerts.items():
         for a in alerts:
             all_symbols.add(a["symbol"])
