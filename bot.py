@@ -1,3 +1,20 @@
+import os
+from flask import Flask
+from threading import Thread
+
+# Flask-сервер для проходимости проверки портов на Render
+app_web = Flask('')
+
+@app_web.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app_web.run(host='0.0.0.0', port=port)
+
+# Запускаем веб-сервер в фоновом потоке
+Thread(target=run_web).start()
 import requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
