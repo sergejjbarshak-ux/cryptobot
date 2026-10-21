@@ -16,7 +16,6 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     app_web.run(host='0.0.0.0', port=port)
 
-# Запускаем веб-сервер в фоновом потоке
 Thread(target=run_web, daemon=True).start()
 
 BOT_TOKEN = "8850750621:AAHaNHjEZIhq3e4_Kc0u9dMGcCaGh_jpj5E"
@@ -26,31 +25,34 @@ user_alerts = {}
 alert_counter = 1
 previous_prices = {}
 
+# Словарь для быстрого сопоставления тикеров с монетами на CoinGecko
+COIN_IDS = {
+    "BTCUSDT": "bitcoin",
+    "ETHUSDT": "ethereum",
+    "APTUSDT": "aptos",
+    "BOMEUSDT": "book-of-meme"
+}
+
 def get_crypto_price(symbol: str):
     symbol = symbol.upper().strip()
-    # Используем несколько резервных зеркальных серверов для обхода блокировок Render
-    endpoints = [
-        f"https://api1.binance.com/api/v3/ticker/price?symbol={symbol}",
-        f"https://api2.binance.com/api/v3/ticker/price?symbol={symbol}",
-        f"https://api3.binance.com/api/v3/ticker/price?symbol={symbol}",
-        f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
-    ]
+    coin_id = COIN_IDS.get(symbol)
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+    if not coin_id:
+        # Если монеты нет в словаре, пробуем угадать по префиксу USDT
+        coin_id = symbol.replace("USDT", "").lower()
+
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+    headers = {"User-Agent": "Mozilla/5.0"}
     
-    for url in endpoints:
-        try:
-            response = requests.get(url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if "price" in data:
-                    return float(data["price"])
-        except Exception as e:
-            print(f"Ошибка запроса {url}: {e}")
-            continue
-            
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if coin_id in data and "usd" in data[coin_id]:
+                return float(data[coin_id]["usd"])
+    except Exception as e:
+        print(f"Ошибка запроса цены для {symbol}: {e}")
+        
     return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,7 +81,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📥 Как добавить алерт:\n"
             "Отправьте сообщение в формате:\n"
             "ТИКЕР ЦЕНА\n\n"
-            "Пример: APTUSDT 8.6 или BOMEUSDT 0.0006245"
+            "Пример: APTUSDT 8.6 или BOMEUSDT 0.00062"
         )
         
     elif text == "📋 Мои алерты":
@@ -126,7 +128,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             current_price = get_crypto_price(symbol)
             if current_price is None:
-                await update.message.reply_text(f"❌ Не удалось найти пару {symbol} на Binance.")
+                await update.message.reply_text(f"❌ Не удалось найти пару {symbol}.")
                 return
 
             initial_side = "above" if current_price >= target_price else "below"
@@ -145,7 +147,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alert_counter += 1
 
             await update.message.reply_text(
-                f"✅ Алерт {symbol} по цене {target_price} добавлен (ID: {alert_id})\n"
+                f"✅ Алерт галереи {symbol} по цене {target_price} добавлен (ID: {alert_id})\n"
                 f"Текущая цена: {current_price}"
             )
         else:
